@@ -1,4 +1,4 @@
-# Modified work Copyright (c) 2017-2020 Science and Technology
+# Modified work Copyright (c) 2017-2021 Science and Technology
 # Facilities Council
 # Original work Copyright (c) 1999-2008 Pearu Peterson
 
@@ -373,7 +373,7 @@ class Base(ComparableMixin):
                     continue
                 try:
                     obj = subcls(string, parent_cls=parent_cls)
-                except NoMatchError as msg:
+                except NoMatchError:
                     obj = None
                 if obj is not None:
                     return obj
@@ -904,15 +904,20 @@ class BinaryOpBase(Base):
         the 'op_pattern' argument also matches this pattern. The
         default (None) does nothing.
 
-        The 'is_add' optional argument should be set to true when the
-        add operand is being matched. The default is false. ****** I'm
-        not sure what this does at the moment. ***
+        When set to true the 'is_add' optional argument causes a '+'
+        in a real literal on the rhs of a match to be ignored. When
+        the add operand is being matched this has the effect of
+        correctly matching patterns like 'a+2.0e+10' i.e. the split is
+        performed between the 'a' and the '2.0e+10'. The default is
+        false. This is a special case optimisation which should
+        probably be removed, see issue #281.
 
         :param lhs_cls: an fparser2 object representing the rule that \
             should be matched to the lhs text.
         :type lhs_cls: subclass of :py:class:`fparser.two.utils.Base`
         :param op_pattern: the pattern to match.
-        :type op_pattern: `str` or an `re` expression ***** pattern?
+        :type op_pattern: `str` or \
+            :py:class:`fparser.two.pattern_tools.Pattern`
         :param rhs_cls: an fparser2 object representing the rule that \
             should be matched to the rhs text.
         :type rhs_cls: subclass of :py:class:`fparser.two.utils.Base`
@@ -926,10 +931,13 @@ class BinaryOpBase(Base):
         :param exclude_op_pattern: optional argument which specifies a \
             particular subpattern to exclude from the match. Defaults \
             to None which means there is no subpattern.
-        :type exclude_op_pattern: ***** pattern???
-        :param bool is_add: ******** optional, default to False
+        :type exclude_op_pattern: :py:class:`fparser.two.pattern_tools.Pattern`
+        :param bool is_add: optional match optimisation for the + \
+            operator when set to True (ignores matching the + in a
+            real literal). Defaults to False.
+
         :returns: a tuple containing the matched lhs, the operator and \
-            the matched rhs of the input string or None is there is \
+            the matched rhs of the input string or None if there is \
             no match.
         :rtype: (:py:class:`fparser.two.utils.Base`, str, \
             :py:class:`fparser.two.utils.Base`) or NoneType
@@ -1031,7 +1039,7 @@ class SeparatorBase(Base):
 class KeywordValueBase(Base):
     '''
 
-    <keyword-value-base> is [ <lhs> = ] <rhs>
+    keyword-value-base is [ <lhs> = ] <rhs>
 
     where:
 
@@ -1065,7 +1073,7 @@ class KeywordValueBase(Base):
 
         '''
         if require_lhs and '=' not in string:
-            return
+            return None
         if isinstance(lhs_cls, (list, tuple)):
             for cls in lhs_cls:
                 obj = KeywordValueBase.match(cls, rhs_cls, string,
@@ -1076,29 +1084,24 @@ class KeywordValueBase(Base):
             return obj
         # We can't just blindly check whether 'string' contains an '='
         # character as it could itself hold a string constant containing
-        # an '=', e.g. FMT='("Hello = False")'
+        # an '=', e.g. FMT='("Hello = False")'.
         # Therefore we only split on the left-most '=' character
         pieces = string.split('=', 1)
         lhs = None
         if len(pieces) == 2:
-            # It does contain at least one '='. Is the content before that
-            # char a valid Fortran name?
+            # It does contain at least one '='. Proceed to attempt to match
+            # the content on the LHS of it.
             lhs = pieces[0].strip()
-            if not pattern.name.match(lhs):
-                # It's not a valid name and therefore we don't have a lhs
-                lhs = None
+            if isinstance(lhs_cls, str):
+                # lhs_cls is a keyword
+                if upper_lhs:
+                    lhs = lhs.upper()
+                if lhs != lhs_cls:
+                    # The content to the left of the '=' does not match the
+                    # supplied keyword
+                    lhs = None
             else:
-                # Attempt to match the content before the '='
-                if isinstance(lhs_cls, str):
-                    # lhs_cls is a keyword
-                    if upper_lhs:
-                        lhs = lhs.upper()
-                    if lhs != lhs_cls:
-                        # The content to the left of the '=' is a valid Fortran
-                        # name and does not match the supplied keyword
-                        return None
-                else:
-                    lhs = lhs_cls(lhs)
+                lhs = lhs_cls(lhs)
         if not lhs:
             # We haven't matched the LHS and therefore proceed to treat the
             # whole string as a RHS if the LHS is not strictly required.
